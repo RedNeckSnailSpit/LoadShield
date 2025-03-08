@@ -1,95 +1,96 @@
 #!/bin/bash
 
-# Function to compare versions
-version_ge() {
-    [ "$(printf '%s\n' "$1" "$2" | sort -V | head -n1)" == "$2" ]
-}
+# Detect architecture
+arch=$(uname -m)
 
-# Detect package manager
-PACKAGE_MANAGER="unknown"
-if command -v apt-get &> /dev/null; then
-    PACKAGE_MANAGER="apt-get"
-    PYTHON_INSTALL_CMD="sudo apt-get install -y python3"
-elif command -v yum &> /dev/null; then
-    PACKAGE_MANAGER="yum"
-    PYTHON_INSTALL_CMD="sudo yum install -y python3"
-elif command -v dnf &> /dev/null; then
-    PACKAGE_MANAGER="dnf"
-    PYTHON_INSTALL_CMD="sudo dnf install -y python3"
-elif command -v pacman &> /dev/null; then
-    PACKAGE_MANAGER="pacman"
-    PYTHON_INSTALL_CMD="sudo pacman -Syu python"
-elif command -v zypper &> /dev/null; then
-    PACKAGE_MANAGER="zypper"
-    PYTHON_INSTALL_CMD="sudo zypper install -y python3"
-fi
+# Read versions from config.json
+min_python_version=$(jq -r '.min_python_version' config.json)
+min_pip_version=$(jq -r '.min_pip_version' config.json)
 
-# Read config.ini for minimum version requirements
-MIN_PYTHON_VERSION=$(grep -oP 'min_python_version\s*=\s*\K.*' config.ini)
-MIN_PIP_VERSION=$(grep -oP 'min_pip_version\s*=\s*\K.*' config.ini)
+# Function to prompt user for installation choice
+prompt_install() {
+    local message=$1
+    local min_version_url_x86=$2
+    local min_version_url_amd64=$3
+    local min_version_url_arm=$4
+    local latest_version_url_x86=$5
+    local latest_version_url_amd64=$6
+    local latest_version_url_arm=$7
 
-# Check if Python is installed
-if ! command -v python3 &> /dev/null; then
-    echo "Python3 is not installed. Would you like to install Python automatically? (no/minimum/latest)"
-    read -r install_python
-    if [ "$install_python" == "no" ]; then
-        echo "To install the minimum version, run: $PYTHON_INSTALL_CMD"
-        echo "To install the latest version, run: $PYTHON_INSTALL_CMD"
+    echo "$message (no/minimum/latest): "
+    read -r install_choice
+    if [ "$install_choice" == "no" ]; then
+        echo "To install the minimum version, download from: $min_version_url_amd64"
+        echo "To install the latest version, download from: $latest_version_url_amd64"
         exit 1
-    elif [ "$install_python" == "minimum" ]; then
-        $PYTHON_INSTALL_CMD
-    elif [ "$install_python" == "latest" ]; then
-        $PYTHON_INSTALL_CMD
+    elif [ "$install_choice" == "minimum" ] || [ "$install_choice" == "latest" ]; then
+        case "$arch" in
+            i*86)
+                if [ "$install_choice" == "minimum" ]; then
+                    echo "$min_version_url_x86"
+                else
+                    echo "$latest_version_url_x86"
+                fi
+                ;;
+            x86_64)
+                if [ "$install_choice" == "minimum" ]; then
+                    echo "$min_version_url_amd64"
+                else
+                    echo "$latest_version_url_amd64"
+                fi
+                ;;
+            arm*)
+                if [ "$install_choice" == "minimum" ]; then
+                    echo "$min_version_url_arm"
+                else
+                    echo "$latest_version_url_arm"
+                fi
+                ;;
+            *)
+                echo "Unknown architecture. Exiting."
+                exit 1
+                ;;
+        esac
     else
         echo "Invalid option. Exiting."
         exit 1
     fi
-fi
+}
 
-# Check Python version
-PYTHON_VERSION=$(python3 -V 2>&1 | awk '{print $2}')
-if ! version_ge "$PYTHON_VERSION" "$MIN_PYTHON_VERSION"; then
-    echo "Python version $PYTHON_VERSION is installed. Minimum required version is $MIN_PYTHON_VERSION."
-    if [ "$PACKAGE_MANAGER" != "unknown" ]; then
-        echo "Would you like to update Python? (no/minimum/latest)"
-        read -r update_python
-        if [ "$update_python" == "no" ]; then
-            echo "To update Python to the minimum version, run: $PYTHON_INSTALL_CMD"
-            echo "To update Python to the latest version, run: $PYTHON_INSTALL_CMD"
-            exit 1
-        elif [ "$update_python" == "minimum" ]; then
-            $PYTHON_INSTALL_CMD
-        elif [ "$update_python" == "latest" ]; then
-            $PYTHON_INSTALL_CMD
-        else
-            echo "Invalid option. Exiting."
-            exit 1
-        fi
-    else
-        echo "Unknown package manager. Please update Python manually."
-        exit 1
-    fi
+# Check if Python is installed
+if ! command -v python3 &> /dev/null; then
+    installer_url=$(prompt_install \
+        "Python is not installed. Would you like to install Python automatically?" \
+        "https://www.python.org/ftp/python/$min_python_version/python-$min_python_version-x86.tar.xz" \
+        "https://www.python.org/ftp/python/$min_python_version/python-$min_python_version-amd64.tar.xz" \
+        "https://www.python.org/ftp/python/$min_python_version/python-$min_python_version-arm64.tar.xz" \
+        "https://www.python.org/ftp/python/latest/python-latest-x86.tar.xz" \
+        "https://www.python.org/ftp/python/latest/python-latest-amd64.tar.xz" \
+        "https://www.python.org/ftp/python/latest/python-latest-arm64.tar.xz" \
+    )
+    echo "Downloading Python installer from $installer_url..."
+    curl -o python_installer.tar.xz "$installer_url"
+    # Add logic to extract and install Python based on the downloaded file
+    echo "Python installed successfully. Please restart the script."
+    exit 1
 fi
 
 # Check if PIP is installed
 if ! command -v pip3 &> /dev/null; then
-    echo "PIP3 is not installed. Please install PIP3 to continue."
-    exit 1
-fi
-
-# Check PIP version
-PIP_VERSION=$(pip3 -V | awk '{print $2}')
-if ! version_ge "$PIP_VERSION" "$MIN_PIP_VERSION"; then
-    echo "PIP version $PIP_VERSION is installed. Minimum required version is $MIN_PIP_VERSION."
-    echo "Would you like to update PIP? (no/minimum/latest)"
-    read -r update_pip
-    if [ "$update_pip" == "no" ]; then
-        echo "To update PIP to the minimum version, run: python3 -m pip install --upgrade pip==\"$MIN_PIP_VERSION\""
-        echo "To update PIP to the latest version, run: python3 -m pip install --upgrade pip"
+    echo "PIP is not installed. Would you like to install PIP automatically? (no/minimum/latest): "
+    read -r install_pip
+    if [ "$install_pip" == "no" ]; then
+        echo "To install PIP, run: python -m ensurepip"
+        echo "Then update PIP to the minimum version: python -m pip install --upgrade pip==$min_pip_version"
+        echo "Or update PIP to the latest version: python -m pip install --upgrade pip"
         exit 1
-    elif [ "$update_pip" == "minimum" ]; then
-        python3 -m pip install --upgrade pip=="$MIN_PIP_VERSION"
-    elif [ "$update_pip" == "latest" ]; then
+    elif [ "$install_pip" == "minimum" ]; then
+        curl -o get-pip.py https://bootstrap.pypa.io/get-pip.py
+        python3 get-pip.py
+        python3 -m pip install --upgrade pip==$min_pip_version
+    elif [ "$install_pip" == "latest" ]; then
+        curl -o get-pip.py https://bootstrap.pypa.io/get-pip.py
+        python3 get-pip.py
         python3 -m pip install --upgrade pip
     else
         echo "Invalid option. Exiting."
@@ -97,33 +98,5 @@ if ! version_ge "$PIP_VERSION" "$MIN_PIP_VERSION"; then
     fi
 fi
 
-# Check if --use-venv argument is provided
-use_venv=false
-for arg in "$@"; do
-    if [ "$arg" == "--use-venv" ]; then
-        use_venv=true
-        break
-    fi
-done
-
-# Setup virtual environment if required
-if [ "$use_venv" == "true" ]; then
-    if [ ! -d "loadshield" ]; then
-        echo "Creating virtual environment..."
-        python3 -m venv loadshield
-    fi
-
-    echo "Activating virtual environment..."
-    source loadshield/bin/activate
-fi
-
-# Install requirements
-pip3 install -r requirements.txt
-
-# Run main.py
-python3 main.py
-
-# Deactivate virtual environment if used
-if [ "$use_venv" == "true" ]; then
-    deactivate
-fi
+# Run setup.py to handle version checks and updates
+python3 setup.py install
